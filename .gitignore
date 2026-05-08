@@ -3,3 +3,10 @@ out
 website/
 docs-minimind-v/
 测试.py
+dataset/*
+checkpoints/*
+__pycache__/*
+model/audio_model
+scripts/__pycache__
+trainer/__pycache__
+

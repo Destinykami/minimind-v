@@ -33,14 +33,14 @@ def main():
     parser = argparse.ArgumentParser(description="MiniMind-V Chat")
     parser.add_argument('--load_from', default='model', type=str, help="模型加载路径（model=原生torch权重，其他路径=transformers格式）")
     parser.add_argument('--save_dir', default='out', type=str, help="模型权重目录")
-    parser.add_argument('--weight', default='ocr_sft_vlm', type=str, help="权重名称前缀（pretrain_vlm, sft_vlm）")
+    parser.add_argument('--weight', default='ocr2_sft_vlm', type=str, help="权重名称前缀（pretrain_vlm, sft_vlm）")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument('--max_new_tokens', default=512, type=int, help="最大生成长度")
-    parser.add_argument('--temperature', default=0.9, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
-    parser.add_argument('--top_p', default=0.9, type=float, help="nucleus采样阈值（0-1）")
-    parser.add_argument('--image_dir', default='./dataset/eval_images/', type=str, help="测试图像目录")
+    parser.add_argument('--max_new_tokens', default=32, type=int, help="最大生成长度")
+    parser.add_argument('--temperature', default=0.0, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
+    parser.add_argument('--top_p', default=1.0, type=float, help="nucleus采样阈值（0-1）")
+    parser.add_argument('--image_dir', default='./dataset/ocr_eval_images/', type=str, help="测试图像目录")
     parser.add_argument('--show_speed', default=1, type=int, help="显示decode速度（tokens/s）")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
     parser.add_argument('--open_thinking', default=0, type=int, help="是否开启自适应思考（0=否，1=是）")
@@ -49,11 +49,12 @@ def main():
     model, tokenizer, preprocess = init_model(args)
     streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     # 自动测试image_dir中的所有图像
-    prompt = "请仔细观察这张图片，描述你所看到的内容：\n\n<image>"
+    prompt = "请逐字输出图中所有清晰可见的文字，只输出最终文字，不要解释。\\n\\n<image>"
+    
     # prompt = "Describe the content of this image in detail:\n\n<image>"
     for image_file in sorted(os.listdir(args.image_dir)):
         if image_file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-            setup_seed(random.randint(1, 31415926))
+            setup_seed(42)
             image_path = os.path.join(args.image_dir, image_file)
             image = Image.open(image_path).convert('RGB')
             pixel_values = {k: v.to(args.device) for k, v in MiniMindVLM.image2tensor(image, preprocess).items()}
@@ -67,12 +68,25 @@ def main():
             print('🤖: ', end='')
             st = time.time()
             generated_ids = model.generate(
-                inputs=inputs["input_ids"], attention_mask=inputs["attention_mask"],
-                max_new_tokens=args.max_new_tokens, do_sample=True, streamer=streamer,
-                pad_token_id=tokenizer.pad_token_id, eos_token_id=tokenizer.eos_token_id,
-                top_p=args.top_p, temperature=args.temperature, pixel_values=pixel_values
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                max_new_tokens=128,
+                do_sample=False,
+                temperature=1.0,
+                top_p=1.0,
+                top_k=0,
+                repetition_penalty=1.0,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                pixel_values=pixel_values,
             )
             gen_tokens = len(generated_ids[0]) - len(inputs["input_ids"][0])
+
+            prompt_len = inputs["input_ids"].shape[1]
+            out_ids = generated_ids[0][prompt_len:]
+            raw_text = tokenizer.decode(out_ids, skip_special_tokens=False)
+            print("RAW:", repr(raw_text))
+
             print(f'\n[Speed]: {gen_tokens / (time.time() - st):.2f} tokens/s\n\n') if args.show_speed else print('\n\n')
 
 if __name__ == "__main__":
